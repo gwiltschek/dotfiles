@@ -1,0 +1,226 @@
+---
+- name: Complete Linux Environment Setup with Catppuccin Theme
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    target_user: "{{ ansible_user_id }}"
+    user_home: "{{ ansible_env.HOME }}"
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. System Dependencies & Package Installation
+    # -------------------------------------------------------------------------
+    - name: Install system dependencies & CLI tools via apt
+      apt:
+        name:
+          - git
+          - zsh
+          - curl
+          - wget
+          - unzip
+          - build-essential
+          - htop
+          - btop
+          - zsh-syntax-highlighting
+          - ripgrep
+          - fd-find
+        state: present
+        update_cache: yes
+      become: true
+    
+    # -------------------------------------------------------------------------
+    # 2. Standalone Binary Installations (Zoxide, fzf, superfile & Oh My Posh)
+    # -------------------------------------------------------------------------
+    - name: Check if zoxide is installed
+      command: which zoxide
+      register: zoxide_check
+      ignore_errors: true
+     
+    - name: Install zoxide
+      shell: "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
+      # when: zoxide_check.rc != 0
+
+    - name: Check if oh-my-posh is installed
+      command: which oh-my-posh
+      register: omp_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Install Oh My Posh
+      shell: "curl -s https://ohmyposh.dev/install.sh | bash -s "
+      become: true
+      #when: omp_check.rc != 0
+
+    - name: Clone fzf repository
+      ansible.builtin.git:
+        repo: https://github.com/junegunn/fzf.git
+        dest: "{{ ansible_env.HOME }}/.fzf"
+        depth: 1
+        version: master
+
+    - name: Run fzf installer
+      ansible.builtin.command:
+        cmd: "{{ ansible_env.HOME }}/.fzf/install --all"
+        creates: "{{ ansible_env.HOME }}/.fzf/bin/fzf"
+
+    - name: Install superfile
+      shell: "curl -s https://superfile.dev/install.sh | bash"
+
+    # -------------------------------------------------------------------------
+    # 3. Directory Structure Setup
+    # -------------------------------------------------------------------------
+    - name: Ensure ~/.config subdirectories exist
+      file:
+        path: "{{ user_home }}/.config/{{ item }}"
+        state: directory
+        owner: "{{ target_user }}"
+        mode: '0755'
+      loop:
+        - nvim
+        - btop/themes
+        - htop
+
+    # -------------------------------------------------------------------------
+    # 4. Neovim & AstroVim (Catppuccin Integration)
+    # -------------------------------------------------------------------------
+    - name: Check Neovim version
+      command: nvim --version
+      register: nvim_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Download Neovim AppImage
+      get_url:
+        url: https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.appimage
+        dest: /usr/local/bin/nvim
+        mode: '0755'
+      become: true
+      when: nvim_check.rc != 0 or 'v0.9' not in nvim_check.stdout
+
+    - name: Clone AstroVim template repository
+      git:
+        repo: 'https://github.com/AstroNvim/template'
+        dest: "{{ user_home }}/.config/nvim"
+        depth: 1
+        update: no
+      ignore_errors: true
+
+    - name: Configure AstroCommunity imports in community.lua
+      copy:
+        dest: "{{ user_home }}/.config/nvim/lua/community.lua"
+        owner: "{{ target_user }}"
+        mode: '0644'
+        content: |
+          return {
+            "AstroNvim/astrocommunity",
+            { import = "astrocommunity.colorscheme.catppuccin" },
+          }
+
+    - name: Set Catppuccin Mocha as default colorscheme in astroui.lua
+      copy:
+        dest: "{{ user_home }}/.config/nvim/lua/plugins/astroui.lua"
+        owner: "{{ target_user }}"
+        mode: '0644'
+        content: |
+          return {
+            "AstroNvim/astroui",
+            ---@type AstroUIOpts
+            opts = {
+              colorscheme = "catppuccin-mocha",
+            },
+          }
+
+    # -------------------------------------------------------------------------
+    # 5. btop & htop Themes (Catppuccin Mocha)
+    # -------------------------------------------------------------------------
+    - name: Download Catppuccin theme for btop
+      get_url:
+        url: https://raw.githubusercontent.com/catppuccin/btop/main/themes/catppuccin_mocha.theme
+        dest: "{{ user_home }}/.config/btop/themes/catppuccin_mocha.theme"
+        owner: "{{ target_user }}"
+        mode: '0644'
+
+    - name: Set Catppuccin theme in btop config
+      copy:
+        dest: "{{ user_home }}/.config/btop/btop.conf"
+        owner: "{{ target_user }}"
+        mode: '0644'
+        content: |
+          color_theme = "catppuccin_mocha"
+          theme_background = False
+
+    # -------------------------------------------------------------------------
+    # 6. Zsh, fzf & Oh My Posh Setup (Zen + Catppuccin)
+    # -------------------------------------------------------------------------
+    - name: Set Zsh as default shell
+      user:
+        name: "{{ target_user }}"
+        shell: /bin/zsh
+      become: true
+
+    - name: ensures {{ user_home }}/.ompthemes dir exists
+      file: 
+        path: "{{ user_home }}/.ompthemes"
+        state: directory
+
+    - name: Get Oh My Posh Theme from github
+      get_url:
+        url: https://raw.githubusercontent.com/gwiltschek/dotfiles/refs/heads/main/zen.toml
+        dest: "{{user_home}}/.ompthemes/zen.toml"
+        owner: "{{ target_user }}"
+        mode: '0644'
+
+    - name: Write ~/.zshrc configuration
+      blockinfile:
+        path: "{{ user_home }}/.zshrc"
+        create: yes
+        owner: "{{ target_user }}"
+        mode: '0644'
+        block: |
+          autoload -U compinit && compinit
+          
+          # Environment Variables & Aliases
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # NVIM
+          export EDITOR="nvim"
+          alias vim="nvim"
+          alias vi="nvim"
+          alias oldvim="vim"
+
+          # auto completion
+          zstyle ':completion:*' special-dirs ..
+          source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+          
+          # zoxide
+          eval "$(zoxide init zsh)"
+
+          # omp
+          eval "$(oh-my-posh init zsh --config '~/.ompthemes/zen.toml')"
+          
+          # Initialize fzf keybindings and completion
+          [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ] && source /usr/share/doc/fzf/examples/key-bindings.zsh
+          [ -f /usr/share/doc/fzf/examples/completion.zsh ] && source /usr/share/doc/fzf/examples/completion.zsh
+          
+          # fzf Catppuccin Mocha Theme (compatible with all fzf versions)
+          export FZF_DEFAULT_OPTS=" \
+          --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
+          --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
+          --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8"
+
+          ## History file configuration
+          [ -z "$HISTFILE" ] && HISTFILE="$HOME/.zsh_history"
+          [ "$HISTSIZE" -lt 50000 ] && HISTSIZE=50000
+          [ "$SAVEHIST" -lt 10000 ] && SAVEHIST=10000
+
+          ## History command configuration
+          setopt extended_history       # record timestamp of command in HISTFILE
+          setopt hist_expire_dups_first # delete duplicates first when HISTFILE size exceeds HISTSIZE
+          setopt hist_ignore_dups       # ignore duplicated commands history list
+          setopt hist_ignore_space      # ignore commands that start with space
+          setopt hist_verify            # show command with history expansion to user before running it
+          setopt share_history          # share command history data
+
+          export SUDO_EDITOR=nvim
