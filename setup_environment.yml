@@ -19,6 +19,7 @@
           - zsh
           - curl
           - wget
+          - gh
           - unzip
           - build-essential
           - htop
