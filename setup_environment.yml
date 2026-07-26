@@ -231,3 +231,5 @@
           setopt share_history          # share command history data
 
           export SUDO_EDITOR=nvim
+
+          export LC_ALL=en_US.UTF-8
