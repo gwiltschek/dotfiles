@@ -35,25 +35,11 @@
     # -------------------------------------------------------------------------
     # 2. Standalone Binary Installations (Zoxide, fzf, superfile & Oh My Posh)
     # -------------------------------------------------------------------------
-    - name: Check if zoxide is installed
-      command: which zoxide
-      register: zoxide_check
-      ignore_errors: true
-     
     - name: Install zoxide
       shell: "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
-      # when: zoxide_check.rc != 0
-
-    - name: Check if oh-my-posh is installed
-      command: which oh-my-posh
-      register: omp_check
-      ignore_errors: true
-      changed_when: false
 
     - name: Install Oh My Posh
       shell: "curl -s https://ohmyposh.dev/install.sh | bash -s "
-      become: true
-      #when: omp_check.rc != 0
 
     - name: Clone fzf repository
       ansible.builtin.git:
