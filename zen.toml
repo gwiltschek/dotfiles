@@ -61,7 +61,7 @@ final_space = true
   newline = true
 
   [[blocks.segments]]
-    template = "{{ if .SSHSession }}\ueba9 {{ end }}{{ .UserName }}@{{ .HostName }}>"
+    template = "{{ if .SSHSession }}\ueba9 {{ end }}{{ if eq .UserName \"root\" }}<lightRed>{{ .UserName }}</>{{ else }}<lightGreen>{{ .UserName }}</>{{ end }}@<lightBlue>{{ .HostName }}</>>"
     background = 'transparent'
     type = 'session'
     style = 'plain'
