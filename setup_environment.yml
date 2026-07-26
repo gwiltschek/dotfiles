@@ -23,14 +23,13 @@
           - build-essential
           - htop
           - btop
-          - gh
           - zsh-syntax-highlighting
           - ripgrep
           - fd-find
           - gcc
         state: present
         update_cache: yes
-        become: true
+      become: true
     
     # -------------------------------------------------------------------------
     # 2. Standalone Binary Installations (Zoxide, fzf, superfile & Oh My Posh)
