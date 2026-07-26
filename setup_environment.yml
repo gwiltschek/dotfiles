@@ -23,6 +23,7 @@
           - build-essential
           - htop
           - btop
+          - gh
           - zsh-syntax-highlighting
           - ripgrep
           - fd-find
