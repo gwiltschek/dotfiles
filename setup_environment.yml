@@ -24,6 +24,7 @@
           - htop
           - btop
           - gh
+          - plocate
           - zsh-syntax-highlighting
           - ripgrep
           - fd-find
