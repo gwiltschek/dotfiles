@@ -233,7 +233,7 @@
           setopt share_history          # share command history data
 
           export SUDO_EDITOR=nvim
-
+          [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
           export LC_ALL=en_US.UTF-8
     
     - name: Write ~/.tmux.conf configuration
