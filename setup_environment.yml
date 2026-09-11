@@ -9,6 +9,11 @@
     user_home: "{{ ansible_env.HOME }}"
 
   tasks:
+    - name: Set system timezone to Europe/Vienna
+      community.general.timezone:
+        name: Europe/Vienna
+      become: true
+
     # -------------------------------------------------------------------------
     # 1. System Dependencies & Package Installation
     # -------------------------------------------------------------------------
