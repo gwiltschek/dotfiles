@@ -20,11 +20,19 @@
         export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
 
         if ! command -v pi >/dev/null 2>&1; then
-          npm install -g pi
+          if npm view pi version >/dev/null 2>&1; then
+            npm install -g pi
+          else
+            echo "Skipping pi: package unavailable on npm"
+          fi
         fi
 
         if ! command -v opencode >/dev/null 2>&1; then
-          npm install -g opencode
+          if npm view opencode version >/dev/null 2>&1; then
+            npm install -g opencode
+          else
+            echo "Skipping opencode: package unavailable on npm"
+          fi
         fi
 
         if ! command -v herdr >/dev/null 2>&1; then
@@ -32,15 +40,27 @@
         fi
 
         if ! command -v claude >/dev/null 2>&1; then
-          npm install -g @anthropic-ai/claude-code
+          if npm view @anthropic-ai/claude-code version >/dev/null 2>&1; then
+            npm install -g @anthropic-ai/claude-code
+          else
+            echo "Skipping claude: package unavailable on npm"
+          fi
         fi
 
         if ! command -v create-t3-app >/dev/null 2>&1; then
-          npm install -g create-t3-app
+          if npm view create-t3-app version >/dev/null 2>&1; then
+            npm install -g create-t3-app
+          else
+            echo "Skipping create-t3-app: package unavailable on npm"
+          fi
         fi
 
         if ! command -v antigravity >/dev/null 2>&1; then
-          npm install -g antigravity
+          if npm view antigravity version >/dev/null 2>&1; then
+            npm install -g antigravity
+          else
+            echo "Skipping antigravity: package unavailable on npm"
+          fi
         fi
       become: true
       register: tool_install
