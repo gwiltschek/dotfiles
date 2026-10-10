@@ -14,10 +14,16 @@
       become: true
       when: ansible_facts['os_family'] == 'Debian'
 
+    - name: Ensure ~/.local/bin exists for user installs
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.local/bin"
+        state: directory
+        mode: '0755'
+
     - name: Install additional CLI tools if they are missing
       ansible.builtin.shell: |
         set -e
-        export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+        export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:$PATH"
 
         if ! command -v pi >/dev/null 2>&1; then
           if npm view pi version >/dev/null 2>&1; then
@@ -62,7 +68,6 @@
             echo "Skipping antigravity: package unavailable on npm"
           fi
         fi
-      become: true
       register: tool_install
       changed_when: true
 
