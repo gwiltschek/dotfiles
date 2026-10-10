@@ -1,0 +1,56 @@
+---
+- name: Install additional developer tools
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Ensure Node.js/npm are available for global CLI installs
+      ansible.builtin.package:
+        name:
+          - nodejs
+          - npm
+        state: present
+      become: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install additional CLI tools if they are missing
+      ansible.builtin.shell: |
+        set -e
+        export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+
+        if ! command -v pi >/dev/null 2>&1; then
+          npm install -g pi
+        fi
+
+        if ! command -v opencode >/dev/null 2>&1; then
+          npm install -g opencode
+        fi
+
+        if ! command -v herdr >/dev/null 2>&1; then
+          echo "herdr is not installed; if it is managed elsewhere in setup_environment.yml, this playbook skips it intentionally."
+        fi
+
+        if ! command -v claude >/dev/null 2>&1; then
+          npm install -g @anthropic-ai/claude-code
+        fi
+
+        if ! command -v create-t3-app >/dev/null 2>&1; then
+          npm install -g create-t3-app
+        fi
+
+        if ! command -v antigravity >/dev/null 2>&1; then
+          npm install -g antigravity
+        fi
+      register: tool_install
+      changed_when: "tool_install.stdout is search('npm install|installed|added')"
+
+    - name: Show installed tool status summary
+      ansible.builtin.debug:
+        msg:
+          - "pi: {{ 'installed' if lookup('pipe', 'command -v pi || true') else 'missing' }}"
+          - "opencode: {{ 'installed' if lookup('pipe', 'command -v opencode || true') else 'missing' }}"
+          - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
+          - "claude: {{ 'installed' if lookup('pipe', 'command -v claude || true') else 'missing' }}"
+          - "create-t3-app: {{ 'installed' if lookup('pipe', 'command -v create-t3-app || true') else 'missing' }}"
+          - "antigravity: {{ 'installed' if lookup('pipe', 'command -v antigravity || true') else 'missing' }}"
