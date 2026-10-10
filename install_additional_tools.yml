@@ -53,14 +53,6 @@
             echo "Skipping create-t3-app: package unavailable on npm"
           fi
         fi
-
-        if ! command -v antigravity >/dev/null 2>&1; then
-          if npm view antigravity version >/dev/null 2>&1; then
-            npm install -g antigravity || npm install --prefix "{{ user_home }}/.local" antigravity
-          else
-            echo "Skipping antigravity: package unavailable on npm"
-          fi
-        fi
       register: npm_tool_install
       changed_when: true
 
@@ -73,6 +65,29 @@
           curl -fsSL https://github.com/copilot/install.sh | bash || echo "Skipping GitHub Copilot CLI: installer unavailable"
         fi
       register: copilot_install
+      changed_when: true
+
+    - name: Remove unrelated npm "antigravity" placeholder package
+      community.general.npm:
+        name: antigravity
+        global: true
+        state: absent
+      become: true
+
+    - name: Install Google Antigravity CLI (agy) if missing
+      ansible.builtin.shell: |
+        set -e
+        export PATH="{{ local_bin }}:$PATH"
+        mkdir -p "{{ local_bin }}"
+        if ! command -v agy >/dev/null 2>&1; then
+          # Download first: piping curl into bash hides download failures
+          if curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/antigravity-install.sh; then
+            bash /tmp/antigravity-install.sh --dir "{{ local_bin }}" || echo "Skipping Antigravity CLI: installer failed"
+          else
+            echo "Skipping Antigravity CLI: installer endpoint unavailable"
+          fi
+        fi
+      register: antigravity_install
       changed_when: true
 
     - name: Install opencode if its official installer provides a binary
@@ -129,4 +144,4 @@
           - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
           - "claude: {{ 'installed' if lookup('pipe', 'command -v claude || true') else 'missing' }}"
           - "create-t3-app: {{ 'installed' if lookup('pipe', 'command -v create-t3-app || true') else 'missing' }}"
-          - "antigravity: {{ 'installed' if lookup('pipe', 'command -v antigravity || true') else 'missing' }}"
+          - "antigravity (agy): {{ 'installed' if lookup('pipe', 'command -v agy || true') else 'missing' }}"
