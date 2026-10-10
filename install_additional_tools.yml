@@ -42,8 +42,9 @@
         if ! command -v antigravity >/dev/null 2>&1; then
           npm install -g antigravity
         fi
+      become: true
       register: tool_install
-      changed_when: "tool_install.stdout is search('npm install|installed|added')"
+      changed_when: true
 
     - name: Show installed tool status summary
       ansible.builtin.debug:
