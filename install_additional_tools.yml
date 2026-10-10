@@ -32,7 +32,7 @@
 
         if ! command -v pi >/dev/null 2>&1; then
           if npm view pi version >/dev/null 2>&1; then
-            npm install -g pi || npm install --prefix "{{ user_home }}/.local" pi
+            npm install -g pi || npm install -g --prefix "{{ user_home }}/.local" pi
           else
             echo "Skipping pi: package unavailable on npm"
           fi
@@ -40,17 +40,19 @@
 
         if ! command -v claude >/dev/null 2>&1; then
           if npm view @anthropic-ai/claude-code version >/dev/null 2>&1; then
-            npm install -g @anthropic-ai/claude-code || npm install --prefix "{{ user_home }}/.local" @anthropic-ai/claude-code
+            npm install -g @anthropic-ai/claude-code || npm install -g --prefix "{{ user_home }}/.local" @anthropic-ai/claude-code
           else
             echo "Skipping claude: package unavailable on npm"
           fi
         fi
 
-        if ! command -v create-t3-app >/dev/null 2>&1; then
-          if npm view create-t3-app version >/dev/null 2>&1; then
-            npm install -g create-t3-app || npm install --prefix "{{ user_home }}/.local" create-t3-app
+        # T3 Code (https://github.com/pingdotgg/t3code) ships as the npm package "t3";
+        # not to be confused with create-t3-app, the T3 web-stack scaffolder.
+        if ! command -v t3 >/dev/null 2>&1; then
+          if npm view t3 version >/dev/null 2>&1; then
+            npm install -g t3 || npm install -g --prefix "{{ user_home }}/.local" t3
           else
-            echo "Skipping create-t3-app: package unavailable on npm"
+            echo "Skipping t3 (T3 Code): package unavailable on npm"
           fi
         fi
       register: npm_tool_install
@@ -66,6 +68,13 @@
         fi
       register: copilot_install
       changed_when: true
+
+    - name: Remove create-t3-app (installed by mistake instead of T3 Code)
+      community.general.npm:
+        name: create-t3-app
+        global: true
+        state: absent
+      become: true
 
     - name: Remove unrelated npm "antigravity" placeholder package
       community.general.npm:
@@ -143,5 +152,5 @@
           - "copilot: {{ 'installed' if lookup('pipe', 'command -v copilot || true') else 'missing' }}"
           - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
           - "claude: {{ 'installed' if lookup('pipe', 'command -v claude || true') else 'missing' }}"
-          - "create-t3-app: {{ 'installed' if lookup('pipe', 'command -v create-t3-app || true') else 'missing' }}"
+          - "t3 code (t3): {{ 'installed' if lookup('pipe', 'command -v t3 || true') else 'missing' }}"
           - "antigravity (agy): {{ 'installed' if lookup('pipe', 'command -v agy || true') else 'missing' }}"
