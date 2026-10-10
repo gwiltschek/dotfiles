@@ -80,8 +80,18 @@
         set -e
         export PATH="{{ local_bin }}:$PATH"
         mkdir -p "{{ local_bin }}"
+        export PATH="{{ user_home }}/.opencode/bin:$PATH"
         if ! command -v opencode >/dev/null 2>&1; then
-          curl -fsSL https://opencode.ai/install.sh | bash || curl -fsSL https://opencode.ai/install | bash || echo "Skipping opencode: official installer unavailable or unsupported on this platform"
+          # Download first: piping curl into bash hides download failures
+          if curl -fsSL https://opencode.ai/install -o /tmp/opencode-install.sh; then
+            bash /tmp/opencode-install.sh --no-modify-path || echo "Skipping opencode: installer failed"
+          else
+            echo "Skipping opencode: installer endpoint unavailable"
+          fi
+        fi
+        # The installer puts the binary in ~/.opencode/bin; expose it via ~/.local/bin
+        if [ -x "{{ user_home }}/.opencode/bin/opencode" ]; then
+          ln -sf "{{ user_home }}/.opencode/bin/opencode" "{{ local_bin }}/opencode"
         fi
       register: opencode_install
       changed_when: true
