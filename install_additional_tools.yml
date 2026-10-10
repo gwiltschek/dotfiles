@@ -4,6 +4,10 @@
   connection: local
   gather_facts: true
 
+  vars:
+    user_home: "{{ lookup('env', 'HOME') }}"
+    local_bin: "{{ user_home }}/.local/bin"
+
   tasks:
     - name: Ensure Node.js/npm are available for global CLI installs
       ansible.builtin.package:
@@ -14,54 +18,29 @@
       become: true
       when: ansible_facts['os_family'] == 'Debian'
 
-    - name: Ensure ~/.local/bin exists for user installs
+    - name: Ensure local bin directory exists
       ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.local/bin"
+        path: "{{ local_bin }}"
         state: directory
         mode: '0755'
 
-    - name: Install additional CLI tools if they are missing
+    - name: Install npm-based CLI tools into user-local prefix
       ansible.builtin.shell: |
         set -e
-        export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:$PATH"
+        export PATH="{{ local_bin }}:$PATH"
+        export npm_config_prefix="{{ user_home }}/.local"
 
         if ! command -v pi >/dev/null 2>&1; then
           if npm view pi version >/dev/null 2>&1; then
-            npm install -g pi
+            npm install -g pi || npm install --prefix "{{ user_home }}/.local" pi
           else
             echo "Skipping pi: package unavailable on npm"
           fi
         fi
 
-        if ! command -v opencode >/dev/null 2>&1; then
-          if command -v curl >/dev/null 2>&1; then
-            curl -fsSL https://opencode.ai/install.sh | bash || curl -fsSL https://opencode.ai/install | bash
-          else
-            echo "Skipping opencode: curl is not installed"
-          fi
-          if ! command -v opencode >/dev/null 2>&1; then
-            echo "opencode installer did not expose an opencode binary on PATH"
-          fi
-        fi
-
-        if ! command -v copilot >/dev/null 2>&1; then
-          if command -v curl >/dev/null 2>&1; then
-            curl -fsSL https://github.com/copilot/install.sh | bash || echo "Skipping GitHub Copilot CLI: installer unavailable"
-          else
-            echo "Skipping GitHub Copilot CLI: curl is not installed"
-          fi
-          if ! command -v copilot >/dev/null 2>&1; then
-            echo "GitHub Copilot CLI installer did not expose a copilot binary on PATH"
-          fi
-        fi
-
-        if ! command -v herdr >/dev/null 2>&1; then
-          echo "herdr is not installed; if it is managed elsewhere in setup_environment.yml, this playbook skips it intentionally."
-        fi
-
         if ! command -v claude >/dev/null 2>&1; then
           if npm view @anthropic-ai/claude-code version >/dev/null 2>&1; then
-            npm install -g @anthropic-ai/claude-code
+            npm install -g @anthropic-ai/claude-code || npm install --prefix "{{ user_home }}/.local" @anthropic-ai/claude-code
           else
             echo "Skipping claude: package unavailable on npm"
           fi
@@ -69,7 +48,7 @@
 
         if ! command -v create-t3-app >/dev/null 2>&1; then
           if npm view create-t3-app version >/dev/null 2>&1; then
-            npm install -g create-t3-app
+            npm install -g create-t3-app || npm install --prefix "{{ user_home }}/.local" create-t3-app
           else
             echo "Skipping create-t3-app: package unavailable on npm"
           fi
@@ -77,13 +56,59 @@
 
         if ! command -v antigravity >/dev/null 2>&1; then
           if npm view antigravity version >/dev/null 2>&1; then
-            npm install -g antigravity
+            npm install -g antigravity || npm install --prefix "{{ user_home }}/.local" antigravity
           else
             echo "Skipping antigravity: package unavailable on npm"
           fi
         fi
-      register: tool_install
+      register: npm_tool_install
       changed_when: true
+
+    - name: Install GitHub Copilot CLI if missing
+      ansible.builtin.shell: |
+        set -e
+        export PATH="{{ local_bin }}:$PATH"
+        mkdir -p "{{ local_bin }}"
+        if ! command -v copilot >/dev/null 2>&1; then
+          curl -fsSL https://github.com/copilot/install.sh | bash || echo "Skipping GitHub Copilot CLI: installer unavailable"
+        fi
+      register: copilot_install
+      changed_when: true
+
+    - name: Install opencode if its official installer provides a binary
+      ansible.builtin.shell: |
+        set -e
+        export PATH="{{ local_bin }}:$PATH"
+        mkdir -p "{{ local_bin }}"
+        if ! command -v opencode >/dev/null 2>&1; then
+          curl -fsSL https://opencode.ai/install.sh | bash || curl -fsSL https://opencode.ai/install | bash || echo "Skipping opencode: official installer unavailable or unsupported on this platform"
+        fi
+      register: opencode_install
+      changed_when: true
+
+    - name: Install herdr if missing and supported by its installer
+      ansible.builtin.shell: |
+        set -e
+        export PATH="{{ local_bin }}:$PATH"
+        if ! command -v herdr >/dev/null 2>&1; then
+          if command -v curl >/dev/null 2>&1; then
+            if curl -fsSL https://herdr.dev/install.sh >/tmp/herdr-install.sh 2>/dev/null; then
+              bash /tmp/herdr-install.sh || echo "Skipping herdr: unsupported or installer failed"
+            else
+              echo "Skipping herdr: installer endpoint unavailable"
+            fi
+          else
+            echo "Skipping herdr: curl not installed"
+          fi
+        fi
+      register: herdr_install
+      changed_when: true
+
+    - name: Ensure new binaries are discoverable on PATH
+      ansible.builtin.shell: |
+        export PATH="{{ local_bin }}:$PATH"
+        hash -r
+      changed_when: false
 
     - name: Show installed tool status summary
       ansible.builtin.debug:
