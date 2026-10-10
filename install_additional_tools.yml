@@ -16,7 +16,7 @@
 
     - name: Ensure ~/.local/bin exists for user installs
       ansible.builtin.file:
-        path: "{{ ansible_env.HOME }}/.local/bin"
+        path: "{{ lookup('env', 'HOME') }}/.local/bin"
         state: directory
         mode: '0755'
 
@@ -38,6 +38,14 @@
             curl -fsSL https://opencode.ai/install.sh | bash || curl -fsSL https://opencode.ai/install | bash
           else
             echo "Skipping opencode: curl is not installed"
+          fi
+        fi
+
+        if ! command -v github-copilot-cli >/dev/null 2>&1; then
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsSL https://github.com/copilot/install.sh | bash || echo "Skipping GitHub Copilot CLI: installer unavailable"
+          else
+            echo "Skipping GitHub Copilot CLI: curl is not installed"
           fi
         fi
 
@@ -76,6 +84,7 @@
         msg:
           - "pi: {{ 'installed' if lookup('pipe', 'command -v pi || true') else 'missing' }}"
           - "opencode: {{ 'installed' if lookup('pipe', 'command -v opencode || true') else 'missing' }}"
+          - "github-copilot-cli: {{ 'installed' if lookup('pipe', 'command -v github-copilot-cli || true') else 'missing' }}"
           - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
           - "claude: {{ 'installed' if lookup('pipe', 'command -v claude || true') else 'missing' }}"
           - "create-t3-app: {{ 'installed' if lookup('pipe', 'command -v create-t3-app || true') else 'missing' }}"
