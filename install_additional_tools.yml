@@ -28,10 +28,10 @@
         fi
 
         if ! command -v opencode >/dev/null 2>&1; then
-          if npm view opencode version >/dev/null 2>&1; then
-            npm install -g opencode
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsSL https://opencode.ai/install.sh | bash || curl -fsSL https://opencode.ai/install | bash
           else
-            echo "Skipping opencode: package unavailable on npm"
+            echo "Skipping opencode: curl is not installed"
           fi
         fi
 
