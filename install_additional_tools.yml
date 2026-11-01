@@ -24,15 +24,26 @@
         state: directory
         mode: '0755'
 
+    - name: Remove unrelated npm "pi" package (prints digits of pi, shadows the pi agent binary)
+      community.general.npm:
+        name: pi
+        global: true
+        state: absent
+      become: true
+
     - name: Install npm-based CLI tools into user-local prefix
       ansible.builtin.shell: |
         set -e
         export PATH="{{ local_bin }}:$PATH"
         export npm_config_prefix="{{ user_home }}/.local"
 
-        if ! command -v pi >/dev/null 2>&1; then
-          if npm view pi version >/dev/null 2>&1; then
-            npm install -g pi || npm install -g --prefix "{{ user_home }}/.local" pi
+        # Pi coding agent (https://github.com/badlogic/pi-mono) ships as
+        # @mariozechner/pi-coding-agent; the bare npm package "pi" is unrelated.
+        # Check where the binary resolves, since a stray "pi" would satisfy command -v.
+        pi_path="$(command -v pi 2>/dev/null || true)"
+        if [ -z "$pi_path" ] || ! readlink -f "$pi_path" | grep -q 'pi-coding-agent'; then
+          if npm view @mariozechner/pi-coding-agent version >/dev/null 2>&1; then
+            npm install -g @mariozechner/pi-coding-agent || npm install -g --prefix "{{ user_home }}/.local" @mariozechner/pi-coding-agent
           else
             echo "Skipping pi: package unavailable on npm"
           fi
@@ -147,7 +158,7 @@
     - name: Show installed tool status summary
       ansible.builtin.debug:
         msg:
-          - "pi: {{ 'installed' if lookup('pipe', 'command -v pi || true') else 'missing' }}"
+          - "pi coding agent: {{ 'installed' if 'pi-coding-agent' in lookup('pipe', 'readlink -f \"$(command -v pi)\" 2>/dev/null || true') else 'missing' }}"
           - "opencode: {{ 'installed' if lookup('pipe', 'command -v opencode || true') else 'missing' }}"
           - "copilot: {{ 'installed' if lookup('pipe', 'command -v copilot || true') else 'missing' }}"
           - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
