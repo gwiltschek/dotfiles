@@ -38,8 +38,18 @@
           - ripgrep
           - fd-find
           - gcc
+          - locales
         state: present
         update_cache: yes
+      become: true
+
+    # .zshrc sets LC_ALL=en_US.UTF-8; minimal Debian/LXC images only ship C.UTF-8.
+    # (On such a host the very first run needs LC_ALL=C.UTF-8, since Ansible
+    # refuses to start with a missing locale.)
+    - name: Generate en_US.UTF-8 locale
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
       become: true
     
     # -------------------------------------------------------------------------

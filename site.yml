@@ -4,6 +4,10 @@
 #   ansible-pull -U https://github.com/gwiltschek/dotfiles -K site.yml
 # or from a clone:
 #   ansible-playbook -K site.yml
+# Needs the collections in requirements.yml (included in the distro "ansible"
+# package; with only ansible-core: ansible-galaxy collection install -r requirements.yml).
+# If Ansible fails with "could not initialize the preferred locale", prefix the
+# first run with LC_ALL=C.UTF-8 (the playbook then generates en_US.UTF-8).
 - name: Base environment
   ansible.builtin.import_playbook: setup_environment.yml
 

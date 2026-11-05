@@ -1,0 +1,7 @@
+---
+# Collections used by the playbooks. The distro "ansible" package already
+# includes them; with only "ansible-core" installed, run:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general   # timezone, locale_gen, npm
+  - name: ansible.posix       # authorized_key
