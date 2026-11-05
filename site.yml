@@ -1,0 +1,11 @@
+---
+# Full setup: base environment first (installs git, curl, zsh, ...), then dev tools.
+# Run on the machine to configure:
+#   ansible-pull -U https://github.com/gwiltschek/dotfiles -K site.yml
+# or from a clone:
+#   ansible-playbook -K site.yml
+- name: Base environment
+  ansible.builtin.import_playbook: setup_environment.yml
+
+- name: Additional developer tools
+  ansible.builtin.import_playbook: install_additional_tools.yml
