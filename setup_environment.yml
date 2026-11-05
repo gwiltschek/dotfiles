@@ -5,8 +5,11 @@
   gather_facts: true
 
   vars:
-    target_user: "{{ ansible_user_id }}"
-    user_home: "{{ ansible_env.HOME }}"
+    target_user: "{{ ansible_facts['user_id'] }}"
+    user_home: "{{ ansible_facts['env']['HOME'] }}"
+    # Set to true (-e update_tools=true) to re-run installers and pull fzf updates
+    update_tools: false
+    nvim_dir: "nvim-linux-{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'x86_64' }}"
 
   tasks:
     - name: Set system timezone to Europe/Vienna
@@ -42,26 +45,44 @@
     # -------------------------------------------------------------------------
     # 2. Standalone Binary Installations (Zoxide, fzf, superfile & Oh My Posh)
     # -------------------------------------------------------------------------
-    - name: Install zoxide
-      shell: "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh"
-
-    - name: Install Oh My Posh
-      shell: "curl -s https://ohmyposh.dev/install.sh | bash -s "
+    # Installers only run when the tool is missing, or with -e update_tools=true.
+    # Scripts are downloaded to a temp file first so download failures are not
+    # hidden by a pipe.
+    - name: Install zoxide, Oh My Posh and superfile
+      ansible.builtin.shell: |
+        set -eu
+        if [ "{{ update_tools | bool }}" != "True" ] && command -v {{ item.bin }} >/dev/null 2>&1; then
+          exit 0
+        fi
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL {{ item.url }} -o "$tmp"
+        bash "$tmp"
+        echo INSTALLED
+      loop:
+        - { name: zoxide, bin: zoxide, url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh" }
+        - { name: Oh My Posh, bin: oh-my-posh, url: "https://ohmyposh.dev/install.sh" }
+        - { name: superfile, bin: spf, url: "https://superfile.dev/install.sh" }
+      loop_control:
+        label: "{{ item.name }}"
+      register: script_installs
+      changed_when: "'INSTALLED' in script_installs.stdout"
+      environment:
+        PATH: "{{ user_home }}/.local/bin:{{ ansible_facts['env']['PATH'] }}"
 
     - name: Clone fzf repository
       ansible.builtin.git:
         repo: https://github.com/junegunn/fzf.git
-        dest: "{{ ansible_env.HOME }}/.fzf"
+        dest: "{{ user_home }}/.fzf"
         depth: 1
         version: master
+        update: "{{ update_tools | bool }}"
+      register: fzf_repo
 
     - name: Run fzf installer
       ansible.builtin.command:
-        cmd: "{{ ansible_env.HOME }}/.fzf/install --all"
-        creates: "{{ ansible_env.HOME }}/.fzf/bin/fzf"
-
-    - name: Install superfile
-      shell: "curl -s https://superfile.dev/install.sh | bash"
+        cmd: "{{ user_home }}/.fzf/install --all"
+        # Re-run after a repo update so the binary matches the new source
+        creates: "{{ omit if fzf_repo.changed else user_home + '/.fzf/bin/fzf' }}"
 
     # -------------------------------------------------------------------------
     # 3. Directory Structure Setup
@@ -80,35 +101,51 @@
     # -------------------------------------------------------------------------
     # 4. Neovim & AstroVim (Catppuccin Integration)
     # -------------------------------------------------------------------------
-    - name: Download Neovim tarball
-      ansible.builtin.get_url:
-        url: https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
-        dest: /tmp/nvim-linux-x86_64.tar.gz
-        mode: '0644'
-      become: true
+    # Neovim tracks the latest release, but only downloads when the version changed
+    - name: Get latest Neovim release
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/neovim/neovim/releases/latest
+        return_content: true
+      register: nvim_latest
 
-    - name: Remove previous Neovim installation
-      ansible.builtin.file:
-        path: /opt/nvim-linux-x86_64
-        state: absent
-      become: true
+    - name: Get installed Neovim version
+      ansible.builtin.command: "/opt/{{ nvim_dir }}/bin/nvim --version"
+      register: nvim_installed
+      changed_when: false
+      failed_when: false
 
-    - name: Unpack Neovim to /opt
-      ansible.builtin.unarchive:
-        src: /tmp/nvim-linux-x86_64.tar.gz
-        dest: /opt
-        remote_src: true
+    - name: Install Neovim {{ nvim_latest.json.tag_name }}
+      when: >-
+        nvim_installed.rc != 0
+        or ('NVIM ' + nvim_latest.json.tag_name) not in nvim_installed.stdout_lines[0]
       become: true
+      block:
+        - name: Download Neovim tarball
+          ansible.builtin.get_url:
+            url: "https://github.com/neovim/neovim/releases/download/{{ nvim_latest.json.tag_name }}/{{ nvim_dir }}.tar.gz"
+            dest: "/tmp/{{ nvim_dir }}.tar.gz"
+            mode: '0644'
 
-    - name: Clean up downloaded tarball
-      ansible.builtin.file:
-        path: /tmp/nvim-linux-x86_64.tar.gz
-        state: absent
-      become: true
+        - name: Remove previous Neovim installation
+          ansible.builtin.file:
+            path: "/opt/{{ nvim_dir }}"
+            state: absent
+
+        - name: Unpack Neovim to /opt
+          ansible.builtin.unarchive:
+            src: "/tmp/{{ nvim_dir }}.tar.gz"
+            dest: /opt
+            remote_src: true
+
+      always:
+        - name: Clean up downloaded tarball
+          ansible.builtin.file:
+            path: "/tmp/{{ nvim_dir }}.tar.gz"
+            state: absent
 
     - name: Ensure nvim is in system PATH
       ansible.builtin.file:
-        src: /opt/nvim-linux-x86_64/bin/nvim
+        src: "/opt/{{ nvim_dir }}/bin/nvim"
         dest: /usr/local/bin/nvim
         state: link
       become: true
@@ -156,14 +193,19 @@
         owner: "{{ target_user }}"
         mode: '0644'
 
+    # Edit single lines: btop writes its full config on exit, so replacing the
+    # whole file would undo that on every run.
     - name: Set Catppuccin theme in btop config
-      copy:
-        dest: "{{ user_home }}/.config/btop/btop.conf"
+      ansible.builtin.lineinfile:
+        path: "{{ user_home }}/.config/btop/btop.conf"
+        regexp: "^{{ item.key }}\\s*="
+        line: "{{ item.key }} = {{ item.value }}"
+        create: true
         owner: "{{ target_user }}"
         mode: '0644'
-        content: |
-          color_theme = "catppuccin_mocha"
-          theme_background = False
+      loop:
+        - { key: color_theme, value: '"catppuccin_mocha"' }
+        - { key: theme_background, value: 'False' }
 
     # -------------------------------------------------------------------------
     # 6. Zsh, fzf & Oh My Posh Setup (Zen + Catppuccin)
@@ -173,6 +215,13 @@
         name: "{{ target_user }}"
         shell: /bin/zsh
       become: true
+
+    - name: Authorize SSH public key from Windows machine
+      # Adds the key without touching other entries in authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ target_user }}"
+        key: "{{ lookup('file', playbook_dir + '/keys/windows.pub') }}"
+        state: present
 
     - name: ensures {{ user_home }}/.ompthemes dir exists
       file: 

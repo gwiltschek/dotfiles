@@ -7,16 +7,84 @@
   vars:
     user_home: "{{ lookup('env', 'HOME') }}"
     local_bin: "{{ user_home }}/.local/bin"
+    npm_user_prefix: "{{ user_home }}/.local"
+
+    nodesource_major: "24"
+
+    # Gitea CLI (https://gitea.com/gitea/tea). The apt package "tea" is an unrelated TeX editor.
+    tea_version: "0.16.0"
+    tea_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts['architecture'], 'amd64') }}"
+    tea_url: "https://gitea.com/gitea/tea/releases/download/v{{ tea_version }}/tea-{{ tea_version }}-linux-{{ tea_arch }}.xz"
+
+    # npm packages installed by mistake in the past (they shadow or impersonate real tools)
+    npm_stray_packages:
+      - pi                                # prints digits of pi, shadows the pi agent binary
+      - "@mariozechner/pi-coding-agent"   # deprecated, replaced by @earendil-works/pi-coding-agent
+      - create-t3-app
+      - antigravity
+
+  # Every task sees user-local bin dirs, so `command -v` checks find tools installed there.
+  environment:
+    PATH: "{{ local_bin }}:{{ user_home }}/.opencode/bin:{{ lookup('env', 'PATH') }}"
 
   tasks:
-    - name: Ensure Node.js/npm are available for global CLI installs
-      ansible.builtin.package:
+    # -------------------------------------------------------------------------
+    # Base packages and Node.js
+    # Supported: Ubuntu 24.04, Ubuntu 26.04, Debian 13.
+    # Node.js comes from NodeSource on all of them: distro nodejs is too old for
+    # pi-coding-agent (needs >= 22.19) on Ubuntu 24.04 (18.19) and Debian 13 (20.19),
+    # and one apt-managed version everywhere keeps apt patching in charge of updates.
+    # -------------------------------------------------------------------------
+    - name: Install base packages
+      ansible.builtin.apt:
         name:
-          - nodejs
-          - npm
+          - ca-certificates
+          - curl
+          - xz-utils
+          - python3-debian   # required by deb822_repository
         state: present
+        update_cache: true
+        cache_valid_time: 3600
       become: true
-      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Gather installed package facts
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Remove distro npm package (conflicts with NodeSource nodejs, which bundles npm)
+      ansible.builtin.apt:
+        name: npm
+        state: absent
+      become: true
+      when: "'npm' in ansible_facts.packages"
+
+    - name: Add NodeSource repository (node {{ nodesource_major }}.x)
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: deb
+        uris: "https://deb.nodesource.com/node_{{ nodesource_major }}.x"
+        suites: nodistro
+        components: main
+        signed_by: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+      become: true
+
+    - name: Prefer NodeSource nodejs over the distro package
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/nodesource
+        mode: '0644'
+        content: |
+          Package: nodejs
+          Pin: origin deb.nodesource.com
+          Pin-Priority: 600
+      become: true
+
+    # state: latest so an already installed distro nodejs gets replaced
+    - name: Install Node.js from NodeSource
+      ansible.builtin.apt:
+        name: nodejs
+        state: latest
+        update_cache: true
+      become: true
 
     - name: Ensure local bin directory exists
       ansible.builtin.file:
@@ -24,144 +92,164 @@
         state: directory
         mode: '0755'
 
-    - name: Remove unrelated npm "pi" package (prints digits of pi, shadows the pi agent binary)
+    # -------------------------------------------------------------------------
+    # Clean up stray npm packages in both the user-local and the system prefix
+    # -------------------------------------------------------------------------
+    - name: Remove stray npm packages from user-local prefix
+      ansible.builtin.shell: |
+        if npm ls -g --prefix "{{ npm_user_prefix }}" --depth=0 "{{ item }}" >/dev/null 2>&1; then
+          npm uninstall -g --prefix "{{ npm_user_prefix }}" "{{ item }}" && echo REMOVED
+        fi
+      loop: "{{ npm_stray_packages }}"
+      register: stray_user
+      changed_when: "'REMOVED' in stray_user.stdout"
+
+    - name: Remove stray npm packages from system prefix
       community.general.npm:
-        name: pi
+        name: "{{ item }}"
         global: true
         state: absent
+      loop: "{{ npm_stray_packages }}"
       become: true
 
-    - name: Install npm-based CLI tools into user-local prefix
+    # -------------------------------------------------------------------------
+    # npm-based tools
+    # -------------------------------------------------------------------------
+    - name: Install pi coding agent into user-local prefix
+      # https://github.com/badlogic/pi-mono. Check where "pi" resolves, since a stray
+      # binary of the same name would satisfy a plain `command -v`.
       ansible.builtin.shell: |
-        set -e
-        export PATH="{{ local_bin }}:$PATH"
-        export npm_config_prefix="{{ user_home }}/.local"
-
-        # Pi coding agent (https://github.com/badlogic/pi-mono) ships as
-        # @mariozechner/pi-coding-agent; the bare npm package "pi" is unrelated.
-        # Check where the binary resolves, since a stray "pi" would satisfy command -v.
+        set -eu
         pi_path="$(command -v pi 2>/dev/null || true)"
-        if [ -z "$pi_path" ] || ! readlink -f "$pi_path" | grep -q 'pi-coding-agent'; then
-          if npm view @mariozechner/pi-coding-agent version >/dev/null 2>&1; then
-            npm install -g @mariozechner/pi-coding-agent || npm install -g --prefix "{{ user_home }}/.local" @mariozechner/pi-coding-agent
-          else
-            echo "Skipping pi: package unavailable on npm"
-          fi
+        if [ -n "$pi_path" ] && readlink -f "$pi_path" | grep -q 'pi-coding-agent'; then
+          exit 0
         fi
+        npm install -g --prefix "{{ npm_user_prefix }}" @earendil-works/pi-coding-agent
+        echo INSTALLED
+      register: pi_install
+      changed_when: "'INSTALLED' in pi_install.stdout"
+      ignore_errors: true
 
-        if ! command -v claude >/dev/null 2>&1; then
-          if npm view @anthropic-ai/claude-code version >/dev/null 2>&1; then
-            npm install -g @anthropic-ai/claude-code || npm install -g --prefix "{{ user_home }}/.local" @anthropic-ai/claude-code
-          else
-            echo "Skipping claude: package unavailable on npm"
-          fi
-        fi
-
-        # T3 Code (https://github.com/pingdotgg/t3code) ships as the npm package "t3";
-        # not to be confused with create-t3-app, the T3 web-stack scaffolder.
-        if ! command -v t3 >/dev/null 2>&1; then
-          if npm view t3 version >/dev/null 2>&1; then
-            npm install -g t3 || npm install -g --prefix "{{ user_home }}/.local" t3
-          else
-            echo "Skipping t3 (T3 Code): package unavailable on npm"
-          fi
-        fi
-      register: npm_tool_install
-      changed_when: true
+    # -------------------------------------------------------------------------
+    # Installer-script based tools. Scripts are downloaded to a temp file first
+    # (so download failures are not hidden by a pipe) and removed afterwards.
+    # Failures are reported but do not stop the play (ignore_errors).
+    # -------------------------------------------------------------------------
+    - name: Install Claude Code (native installer) if missing
+      ansible.builtin.shell: |
+        set -eu
+        command -v claude >/dev/null 2>&1 && exit 0
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL https://claude.ai/install.sh -o "$tmp"
+        bash "$tmp"
+        echo INSTALLED
+      register: claude_install
+      changed_when: "'INSTALLED' in claude_install.stdout"
+      ignore_errors: true
 
     - name: Install GitHub Copilot CLI if missing
       ansible.builtin.shell: |
-        set -e
-        export PATH="{{ local_bin }}:$PATH"
-        mkdir -p "{{ local_bin }}"
-        if ! command -v copilot >/dev/null 2>&1; then
-          curl -fsSL https://github.com/copilot/install.sh | bash || echo "Skipping GitHub Copilot CLI: installer unavailable"
-        fi
+        set -eu
+        command -v copilot >/dev/null 2>&1 && exit 0
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL https://gh.io/copilot-install -o "$tmp"
+        PREFIX="{{ npm_user_prefix }}" bash "$tmp"
+        echo INSTALLED
       register: copilot_install
-      changed_when: true
-
-    - name: Remove create-t3-app (installed by mistake instead of T3 Code)
-      community.general.npm:
-        name: create-t3-app
-        global: true
-        state: absent
-      become: true
-
-    - name: Remove unrelated npm "antigravity" placeholder package
-      community.general.npm:
-        name: antigravity
-        global: true
-        state: absent
-      become: true
+      changed_when: "'INSTALLED' in copilot_install.stdout"
+      ignore_errors: true
 
     - name: Install Google Antigravity CLI (agy) if missing
       ansible.builtin.shell: |
-        set -e
-        export PATH="{{ local_bin }}:$PATH"
-        mkdir -p "{{ local_bin }}"
-        if ! command -v agy >/dev/null 2>&1; then
-          # Download first: piping curl into bash hides download failures
-          if curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/antigravity-install.sh; then
-            bash /tmp/antigravity-install.sh --dir "{{ local_bin }}" || echo "Skipping Antigravity CLI: installer failed"
-          else
-            echo "Skipping Antigravity CLI: installer endpoint unavailable"
-          fi
-        fi
+        set -eu
+        command -v agy >/dev/null 2>&1 && exit 0
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL https://antigravity.google/cli/install.sh -o "$tmp"
+        bash "$tmp" --dir "{{ local_bin }}"
+        echo INSTALLED
       register: antigravity_install
-      changed_when: true
+      changed_when: "'INSTALLED' in antigravity_install.stdout"
+      ignore_errors: true
 
-    - name: Install opencode if its official installer provides a binary
+    - name: Install opencode if missing
       ansible.builtin.shell: |
-        set -e
-        export PATH="{{ local_bin }}:$PATH"
-        mkdir -p "{{ local_bin }}"
-        export PATH="{{ user_home }}/.opencode/bin:$PATH"
-        if ! command -v opencode >/dev/null 2>&1; then
-          # Download first: piping curl into bash hides download failures
-          if curl -fsSL https://opencode.ai/install -o /tmp/opencode-install.sh; then
-            bash /tmp/opencode-install.sh --no-modify-path || echo "Skipping opencode: installer failed"
-          else
-            echo "Skipping opencode: installer endpoint unavailable"
-          fi
-        fi
-        # The installer puts the binary in ~/.opencode/bin; expose it via ~/.local/bin
-        if [ -x "{{ user_home }}/.opencode/bin/opencode" ]; then
-          ln -sf "{{ user_home }}/.opencode/bin/opencode" "{{ local_bin }}/opencode"
-        fi
+        set -eu
+        command -v opencode >/dev/null 2>&1 && exit 0
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL https://opencode.ai/install -o "$tmp"
+        bash "$tmp" --no-modify-path
+        echo INSTALLED
       register: opencode_install
-      changed_when: true
+      changed_when: "'INSTALLED' in opencode_install.stdout"
+      ignore_errors: true
 
-    - name: Install herdr if missing and supported by its installer
+    - name: Check for opencode binary
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.opencode/bin/opencode"
+      register: opencode_bin
+
+    - name: Expose opencode via ~/.local/bin (installer puts it in ~/.opencode/bin)
+      ansible.builtin.file:
+        src: "{{ user_home }}/.opencode/bin/opencode"
+        dest: "{{ local_bin }}/opencode"
+        state: link
+      when: opencode_bin.stat.exists
+
+    - name: Install herdr if missing
       ansible.builtin.shell: |
-        set -e
-        export PATH="{{ local_bin }}:$PATH"
-        if ! command -v herdr >/dev/null 2>&1; then
-          if command -v curl >/dev/null 2>&1; then
-            if curl -fsSL https://herdr.dev/install.sh >/tmp/herdr-install.sh 2>/dev/null; then
-              bash /tmp/herdr-install.sh || echo "Skipping herdr: unsupported or installer failed"
-            else
-              echo "Skipping herdr: installer endpoint unavailable"
-            fi
-          else
-            echo "Skipping herdr: curl not installed"
-          fi
-        fi
+        set -eu
+        command -v herdr >/dev/null 2>&1 && exit 0
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL https://herdr.dev/install.sh -o "$tmp"
+        bash "$tmp"
+        echo INSTALLED
       register: herdr_install
-      changed_when: true
+      changed_when: "'INSTALLED' in herdr_install.stdout"
+      ignore_errors: true
 
-    - name: Ensure new binaries are discoverable on PATH
+    # -------------------------------------------------------------------------
+    # Gitea CLI (tea): pinned release binary, verified against its sha256
+    # -------------------------------------------------------------------------
+    - name: Check installed tea version
+      ansible.builtin.command: "{{ local_bin }}/tea --version"
+      register: tea_current
+      changed_when: false
+      failed_when: false
+
+    - name: Install Gitea CLI (tea) {{ tea_version }}
+      when: tea_version not in (tea_current.stdout | default(''))
+      block:
+        - name: Download tea release (checksum verified)
+          ansible.builtin.get_url:
+            url: "{{ tea_url }}"
+            dest: "/tmp/tea-{{ tea_version }}.xz"
+            checksum: "sha256:{{ tea_url }}.sha256"
+            mode: '0644'
+
+        - name: Decompress tea into ~/.local/bin
+          ansible.builtin.shell: |
+            set -eu
+            xz -dc "/tmp/tea-{{ tea_version }}.xz" > "{{ local_bin }}/tea.new"
+            chmod 0755 "{{ local_bin }}/tea.new"
+            mv "{{ local_bin }}/tea.new" "{{ local_bin }}/tea"
+
+      always:
+        - name: Remove downloaded tea archive
+          ansible.builtin.file:
+            path: "/tmp/tea-{{ tea_version }}.xz"
+            state: absent
+
+    # -------------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------------
+    - name: Collect installed tool status
       ansible.builtin.shell: |
-        export PATH="{{ local_bin }}:$PATH"
-        hash -r
+        for t in pi claude copilot opencode agy herdr tea gh; do
+          if p="$(command -v "$t")"; then echo "$t: $(readlink -f "$p")"; else echo "$t: MISSING"; fi
+        done
+      register: tool_status
       changed_when: false
 
-    - name: Show installed tool status summary
+    - name: Show installed tool status
       ansible.builtin.debug:
-        msg:
-          - "pi coding agent: {{ 'installed' if 'pi-coding-agent' in lookup('pipe', 'readlink -f \"$(command -v pi)\" 2>/dev/null || true') else 'missing' }}"
-          - "opencode: {{ 'installed' if lookup('pipe', 'command -v opencode || true') else 'missing' }}"
-          - "copilot: {{ 'installed' if lookup('pipe', 'command -v copilot || true') else 'missing' }}"
-          - "herdr: {{ 'installed' if lookup('pipe', 'command -v herdr || true') else 'missing' }}"
-          - "claude: {{ 'installed' if lookup('pipe', 'command -v claude || true') else 'missing' }}"
-          - "t3 code (t3): {{ 'installed' if lookup('pipe', 'command -v t3 || true') else 'missing' }}"
-          - "antigravity (agy): {{ 'installed' if lookup('pipe', 'command -v agy || true') else 'missing' }}"
+        var: tool_status.stdout_lines
