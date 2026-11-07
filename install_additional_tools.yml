@@ -11,10 +11,10 @@
 
     nodesource_major: "24"
 
-    # Gitea CLI (https://gitea.com/gitea/tea). The apt package "tea" is an unrelated TeX editor.
-    tea_version: "0.16.0"
-    tea_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts['architecture'], 'amd64') }}"
-    tea_url: "https://gitea.com/gitea/tea/releases/download/v{{ tea_version }}/tea-{{ tea_version }}-linux-{{ tea_arch }}.xz"
+    # Gitea CLI gt (https://gitea.com/gitea/cli), the successor of the archived tea CLI.
+    gt_version: "1.1.0"
+    gt_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts['architecture'], 'amd64') }}"
+    gt_url: "https://gitea.com/gitea/cli/releases/download/v{{ gt_version }}/gitea-cli-{{ gt_version }}-linux-{{ gt_arch }}.xz"
 
     # npm packages installed by mistake in the past (they shadow or impersonate real tools)
     npm_stray_packages:
@@ -208,43 +208,49 @@
       ignore_errors: true
 
     # -------------------------------------------------------------------------
-    # Gitea CLI (tea): pinned release binary, verified against its sha256
+    # Gitea CLI (gt): pinned release binary, verified against its sha256.
+    # Replaces tea, which upstream archived in favour of gt.
     # -------------------------------------------------------------------------
-    - name: Check installed tea version
-      ansible.builtin.command: "{{ local_bin }}/tea --version"
-      register: tea_current
+    - name: Check installed gt version
+      ansible.builtin.command: "{{ local_bin }}/gt --version"
+      register: gt_current
       changed_when: false
       failed_when: false
 
-    - name: Install Gitea CLI (tea) {{ tea_version }}
-      when: tea_version not in (tea_current.stdout | default(''))
+    - name: Install Gitea CLI (gt) {{ gt_version }}
+      when: gt_version not in (gt_current.stdout | default(''))
       block:
-        - name: Download tea release (checksum verified)
+        - name: Download gt release (checksum verified)
           ansible.builtin.get_url:
-            url: "{{ tea_url }}"
-            dest: "/tmp/tea-{{ tea_version }}.xz"
-            checksum: "sha256:{{ tea_url }}.sha256"
+            url: "{{ gt_url }}"
+            dest: "/tmp/gt-{{ gt_version }}.xz"
+            checksum: "sha256:{{ gt_url }}.sha256"
             mode: '0644'
 
-        - name: Decompress tea into ~/.local/bin
+        - name: Decompress gt into ~/.local/bin
           ansible.builtin.shell: |
             set -eu
-            xz -dc "/tmp/tea-{{ tea_version }}.xz" > "{{ local_bin }}/tea.new"
-            chmod 0755 "{{ local_bin }}/tea.new"
-            mv "{{ local_bin }}/tea.new" "{{ local_bin }}/tea"
+            xz -dc "/tmp/gt-{{ gt_version }}.xz" > "{{ local_bin }}/gt.new"
+            chmod 0755 "{{ local_bin }}/gt.new"
+            mv "{{ local_bin }}/gt.new" "{{ local_bin }}/gt"
 
       always:
-        - name: Remove downloaded tea archive
+        - name: Remove downloaded gt archive
           ansible.builtin.file:
-            path: "/tmp/tea-{{ tea_version }}.xz"
+            path: "/tmp/gt-{{ gt_version }}.xz"
             state: absent
+
+    - name: Remove the archived tea CLI
+      ansible.builtin.file:
+        path: "{{ local_bin }}/tea"
+        state: absent
 
     # -------------------------------------------------------------------------
     # Summary
     # -------------------------------------------------------------------------
     - name: Collect installed tool status
       ansible.builtin.shell: |
-        for t in pi claude copilot opencode agy herdr tea gh; do
+        for t in pi claude copilot opencode agy herdr gt gh; do
           if p="$(command -v "$t")"; then echo "$t: $(readlink -f "$p")"; else echo "$t: MISSING"; fi
         done
       register: tool_status
